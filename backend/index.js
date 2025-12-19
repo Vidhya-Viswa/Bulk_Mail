@@ -1,7 +1,6 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const mongoose = require("mongoose");
 const { Resend } = require("resend");
 
 const app = express();
@@ -15,75 +14,52 @@ app.use(
 );
 app.use(express.json());
 
-/* -------------------- MONGODB -------------------- */
-mongoose
-  .connect(process.env.MONGO_URI, {
-    serverSelectionTimeoutMS: 5000,
-    socketTimeoutMS: 45000,
-  })
-  .then(() => console.log("✅ Connected to MongoDB"))
-  .catch((err) => console.error("❌ MongoDB connection error:", err));
-
-/* -------------------- MODEL -------------------- */
-const Credential = mongoose.model(
-  "credential",
-  new mongoose.Schema({}, { strict: false }),
-  "bulkmail"
-);
-
-/* -------------------- RESEND -------------------- */
+/* -------------------- RESEND INIT -------------------- */
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-/* -------------------- ROUTES -------------------- */
-
-// Health check
+/* -------------------- HEALTH CHECK -------------------- */
 app.get("/", (req, res) => {
   res.send("Bulk Mail Backend is running ✅");
 });
 
-// Send Email API
+/* -------------------- SEND EMAIL -------------------- */
 app.post("/sendemail", async (req, res) => {
   try {
-    const { msg, subject, emailList } = req.body;
+    const { subject, msg, emailList } = req.body;
 
-    if (!msg || !subject || !Array.isArray(emailList) || emailList.length === 0) {
+    if (!subject || !msg || !Array.isArray(emailList) || emailList.length === 0) {
       return res.status(400).json({
         success: false,
-        message: "Message, subject, or email list missing ❌",
+        message: "Invalid request data ❌",
       });
     }
 
-    // Send emails in parallel
-    const results = await Promise.all(
-      emailList.map(async (email) => {
-        try {
-          await resend.emails.send({
-            from: "Bulk Mail <onboarding@resend.dev>",
-            to: email,
-            subject: subject,
-            html: `<p>${msg}</p>`,
-          });
+    let failed = 0;
 
-          console.log(`✅ Sent to ${email}`);
-          return true;
-        } catch (err) {
-          console.error(`❌ Failed for ${email}:`, err.message);
-          return false;
-        }
-      })
-    );
-
-    const failedCount = results.filter((r) => !r).length;
+    for (const email of emailList) {
+      try {
+        await resend.emails.send({
+          from: "Bulk Mail <vidhyaviswa20@gmail.com>", // 🔴 MUST MATCH RESEND LOGIN
+          to: email,
+          subject: subject,
+          text: msg,
+        });
+        console.log(`✅ Email sent to ${email}`);
+      } catch (err) {
+        failed++;
+        console.error(`❌ Failed for ${email}`, err.message);
+      }
+    }
 
     res.json({
-      success: failedCount === 0,
+      success: failed === 0,
       message:
-        failedCount === 0
+        failed === 0
           ? "All emails sent successfully ✅"
-          : `${failedCount} emails failed ❌`,
+          : `${failed} emails failed ❌`,
     });
   } catch (err) {
-    console.error("❌ Server error:", err);
+    console.error("❌ Server error", err);
     res.status(500).json({
       success: false,
       message: "Server error ❌",
