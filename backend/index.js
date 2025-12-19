@@ -9,9 +9,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// 🔗 MongoDB connection
+// 🔗 MongoDB connection (USE ENV VARIABLE)
 mongoose
-  .connect("mongodb+srv://Vidhya:1234@cluster0.7mrje4x.mongodb.net/passkey?appName=Cluster0")
+  .connect(process.env.MONGO_URI)
   .then(() => console.log("✅ Connected to MongoDB"))
   .catch((err) => console.error("❌ MongoDB connection error:", err));
 
@@ -22,12 +22,16 @@ const Credential = mongoose.model(
   "bulkmail"
 );
 
-// 📩 Send Email API (Updated for subject and progress)
+// ✅ Test route (IMPORTANT for Render)
+app.get("/", (req, res) => {
+  res.send("Bulk Mail Backend is running ✅");
+});
+
+// 📩 Send Email API
 app.post("/sendemail", async (req, res) => {
   try {
     const { msg, subject, emailList } = req.body;
 
-    // Validation
     if (!msg || !subject || !emailList || emailList.length === 0) {
       return res.status(400).json({
         success: false,
@@ -35,7 +39,6 @@ app.post("/sendemail", async (req, res) => {
       });
     }
 
-    // Fetch credentials
     const credentials = await Credential.find();
     if (!credentials.length) {
       return res.json({
@@ -46,42 +49,29 @@ app.post("/sendemail", async (req, res) => {
 
     const { user, pass } = credentials[0];
 
-    // Nodemailer transporter
     const transporter = nodemailer.createTransport({
       service: "gmail",
-      auth: {
-        user,
-        pass, // Gmail App Password
-      },
+      auth: { user, pass },
     });
 
-    console.log(`📨 Sending emails to ${emailList.length} recipients...`);
+    let failedCount = 0;
 
-    let sentCount = 0;
-    // Send emails sequentially for progress tracking
-    const results = [];
     for (const email of emailList) {
       try {
         await transporter.sendMail({
           from: user,
           to: email,
-          subject: subject, // Use custom subject
+          subject,
           text: msg,
         });
-        console.log(`✅ Email sent to: ${email}`);
-        results.push(true);
+        console.log(`✅ Email sent to ${email}`);
       } catch (err) {
-        console.error(`❌ Failed to send to ${email}:`, err.message);
-        results.push(false);
+        failedCount++;
+        console.error(`❌ Failed for ${email}:`, err.message);
       }
-      sentCount++;
-      // Optional: Emit progress via WebSocket or just log (for now)
     }
 
-    const failedCount = results.filter((r) => !r).length;
-
-    // Response
-    return res.json({
+    res.json({
       success: failedCount === 0,
       message:
         failedCount === 0
@@ -90,14 +80,12 @@ app.post("/sendemail", async (req, res) => {
     });
   } catch (err) {
     console.error("❌ Server error:", err);
-    return res.status(500).json({
-      success: false,
-      message: "Server error ❌",
-    });
+    res.status(500).json({ success: false, message: "Server error ❌" });
   }
 });
 
-// 🚀 Start server
-app.listen(5000, () => {
-  console.log("🚀 Server running at http://localhost:5000");
+// 🚀 START SERVER (RENDER SAFE)
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
 });
