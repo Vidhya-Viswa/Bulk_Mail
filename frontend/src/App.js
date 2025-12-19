@@ -83,7 +83,11 @@ function App() {
     setStatus(true);
     setProgress(0);
     try {
-      const res = await axios.post("http://localhost:5000/sendemail", { msg, subject, emailList });
+      const res = await axios.post(
+        "https://bulk-mail-backend-tz4n.onrender.com/sendemail",
+        { msg, subject, emailList }
+      );
+
       alert(res.data.message);
       if (res.data.success) {
         setSendHistory([...sendHistory, { subject, count: emailList.length, date: new Date().toLocaleString() }]);
@@ -94,7 +98,7 @@ function App() {
       }
     } catch (err) {
       console.error(err);
-      alert("Something went wrong!");
+      alert(err.response?.data?.message || "Backend error");
     } finally {
       setStatus(false);
       setProgress(100);
