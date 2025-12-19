@@ -1,7 +1,8 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const { Resend } = require("resend");
+const mongoose = require("mongoose");
+const Resend = require("resend");
 
 const app = express();
 
@@ -14,56 +15,98 @@ app.use(
 );
 app.use(express.json());
 
-/* -------------------- RESEND INIT -------------------- */
-const resend = new Resend(process.env.RESEND_API_KEY);
+/* -------------------- MONGODB -------------------- */
+mongoose
+  .connect(process.env.MONGO_URI, {
+    serverSelectionTimeoutMS: 5000,
+    socketTimeoutMS: 45000,
+  })
+  .then(() => console.log("✅ Connected to MongoDB"))
+  .catch((err) => console.error("❌ MongoDB connection error:", err));
 
-/* -------------------- HEALTH CHECK -------------------- */
+/* -------------------- MODEL -------------------- */
+const Credential = mongoose.model(
+  "credential",
+  new mongoose.Schema({}, { strict: false }),
+  "bulkmail"
+);
+
+/* -------------------- RESEND INIT -------------------- */
+let resend;
+async function initResend() {
+  try {
+    const credentials = await Credential.findOne();
+    if (!credentials || !credentials.resendApiKey) {
+      console.error("❌ No Resend API key found in DB");
+      return;
+    }
+
+    resend = new Resend(credentials.resendApiKey);
+    console.log("📧 Resend initialized");
+  } catch (err) {
+    console.error("❌ Resend init error:", err);
+  }
+}
+
+mongoose.connection.once("open", initResend);
+
+/* -------------------- ROUTES -------------------- */
 app.get("/", (req, res) => {
-  res.send("Bulk Mail Backend is running ✅");
+  res.send("Bulk Mail Backend with Resend is running ✅");
 });
 
-/* -------------------- SEND EMAIL -------------------- */
 app.post("/sendemail", async (req, res) => {
   try {
-    const { subject, msg, emailList } = req.body;
+    const { msg, subject, emailList } = req.body;
 
-    if (!subject || !msg || !Array.isArray(emailList) || emailList.length === 0) {
+    if (!msg || !subject || !Array.isArray(emailList) || emailList.length === 0) {
       return res.status(400).json({
         success: false,
-        message: "Invalid request data ❌",
+        message: "Message, subject, or email list missing ❌",
       });
     }
 
-    let failed = 0;
-
-    for (const email of emailList) {
-      try {
-        await resend.emails.send({
-          from: "Bulk Mail <vidhyaviswa20@gmail.com>", // 🔴 MUST MATCH RESEND LOGIN
-          to: email,
-          subject: subject,
-          text: msg,
-        });
-        console.log(`✅ Email sent to ${email}`);
-      } catch (err) {
-        failed++;
-        console.error(`❌ Failed for ${email}`, err.message);
-      }
+    if (!resend) {
+      return res.status(500).json({
+        success: false,
+        message: "Resend service not ready ❌",
+      });
     }
 
+    // Send emails sequentially or in parallel
+    const results = await Promise.all(
+      emailList.map(async (email) => {
+        try {
+          await resend.emails.send({
+            from: "Vidhya V <vidhyaviswa20@gmail.com>", // Verified in Resend
+            to: email,
+            subject,
+            text: msg,
+            html: `<p>${msg}</p>`,
+          });
+          console.log(`✅ Sent to ${email}`);
+          return { email, success: true };
+        } catch (err) {
+          console.error(`❌ Failed for ${email}:`, err.message);
+          return { email, success: false, error: err.message };
+        }
+      })
+    );
+
+    const failed = results.filter((r) => !r.success);
+    const successCount = results.length - failed.length;
+
     res.json({
-      success: failed === 0,
+      success: failed.length === 0,
       message:
-        failed === 0
-          ? "All emails sent successfully ✅"
-          : `${failed} emails failed ❌`,
+        failed.length === 0
+          ? `All ${results.length} emails sent successfully ✅`
+          : `${successCount} emails sent, ${failed.length} failed ❌`,
+      failedEmails: failed,
     });
   } catch (err) {
-    console.error("❌ Server error", err);
-    res.status(500).json({
-      success: false,
-      message: "Server error ❌",
-    });
+    console.error("❌ Server error:", err);
+    res.status(500).json({ success: false, message: "Server error ❌" });
   }
 });
 
