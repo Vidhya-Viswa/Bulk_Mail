@@ -1,3 +1,4 @@
+require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const nodemailer = require("nodemailer");
@@ -5,71 +6,104 @@ const mongoose = require("mongoose");
 
 const app = express();
 
-// Middleware
-app.use(cors());
+/* -------------------- MIDDLEWARE -------------------- */
+app.use(
+  cors({
+    origin: "https://bulk-mail-roan.vercel.app",
+    methods: ["GET", "POST"],
+  })
+);
 app.use(express.json());
 
-// 🔗 MongoDB connection (USE ENV VARIABLE)
+/* -------------------- MONGODB -------------------- */
 mongoose
-  .connect(process.env.MONGO_URI)
+  .connect(process.env.MONGO_URI, {
+    serverSelectionTimeoutMS: 5000, // ⬅ faster failure
+    socketTimeoutMS: 45000,
+  })
   .then(() => console.log("✅ Connected to MongoDB"))
   .catch((err) => console.error("❌ MongoDB connection error:", err));
 
-// 📦 Credential model (collection: bulkmail)
+/* -------------------- MODEL -------------------- */
 const Credential = mongoose.model(
   "credential",
   new mongoose.Schema({}, { strict: false }),
   "bulkmail"
 );
 
-// ✅ Test route (IMPORTANT for Render)
+/* -------------------- MAIL TRANSPORTER (GLOBAL) -------------------- */
+let transporter = null;
+
+async function initMailer() {
+  try {
+    const credentials = await Credential.findOne();
+    if (!credentials) {
+      console.error("❌ No email credentials found in DB");
+      return;
+    }
+
+    transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: credentials.user,
+        pass: credentials.pass,
+      },
+    });
+
+    console.log("📧 Mail transporter ready");
+  } catch (err) {
+    console.error("❌ Mail init error:", err);
+  }
+}
+
+mongoose.connection.once("open", initMailer);
+
+/* -------------------- ROUTES -------------------- */
+
+// Health check (VERY IMPORTANT for Render)
 app.get("/", (req, res) => {
   res.send("Bulk Mail Backend is running ✅");
 });
 
-// 📩 Send Email API
+// Send Email API
 app.post("/sendemail", async (req, res) => {
   try {
     const { msg, subject, emailList } = req.body;
 
-    if (!msg || !subject || !emailList || emailList.length === 0) {
+    if (!msg || !subject || !Array.isArray(emailList) || emailList.length === 0) {
       return res.status(400).json({
         success: false,
         message: "Message, subject, or email list missing ❌",
       });
     }
 
-    const credentials = await Credential.find();
-    if (!credentials.length) {
-      return res.json({
+    if (!transporter) {
+      return res.status(500).json({
         success: false,
-        message: "No email credentials found ❌",
+        message: "Mail service not ready ❌",
       });
     }
 
-    const { user, pass } = credentials[0];
+    // Send emails in parallel
+    const results = await Promise.all(
+      emailList.map(async (email) => {
+        try {
+          await transporter.sendMail({
+            from: transporter.options.auth.user,
+            to: email,
+            subject,
+            text: msg,
+          });
+          console.log(`✅ Sent to ${email}`);
+          return true;
+        } catch (err) {
+          console.error(`❌ Failed for ${email}:`, err.message);
+          return false;
+        }
+      })
+    );
 
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: { user, pass },
-    });
-
-    let failedCount = 0;
-
-    for (const email of emailList) {
-      try {
-        await transporter.sendMail({
-          from: user,
-          to: email,
-          subject,
-          text: msg,
-        });
-        console.log(`✅ Email sent to ${email}`);
-      } catch (err) {
-        failedCount++;
-        console.error(`❌ Failed for ${email}:`, err.message);
-      }
-    }
+    const failedCount = results.filter((r) => !r).length;
 
     res.json({
       success: failedCount === 0,
@@ -80,11 +114,14 @@ app.post("/sendemail", async (req, res) => {
     });
   } catch (err) {
     console.error("❌ Server error:", err);
-    res.status(500).json({ success: false, message: "Server error ❌" });
+    res.status(500).json({
+      success: false,
+      message: "Server error ❌",
+    });
   }
 });
 
-// 🚀 START SERVER (RENDER SAFE)
+/* -------------------- SERVER -------------------- */
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
