@@ -1,8 +1,8 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const nodemailer = require("nodemailer");
 const mongoose = require("mongoose");
+const { Resend } = require("resend");
 
 const app = express();
 
@@ -18,7 +18,7 @@ app.use(express.json());
 /* -------------------- MONGODB -------------------- */
 mongoose
   .connect(process.env.MONGO_URI, {
-    serverSelectionTimeoutMS: 5000, // ⬅ faster failure
+    serverSelectionTimeoutMS: 5000,
     socketTimeoutMS: 45000,
   })
   .then(() => console.log("✅ Connected to MongoDB"))
@@ -31,36 +31,12 @@ const Credential = mongoose.model(
   "bulkmail"
 );
 
-/* -------------------- MAIL TRANSPORTER (GLOBAL) -------------------- */
-let transporter = null;
-
-async function initMailer() {
-  try {
-    const credentials = await Credential.findOne();
-    if (!credentials) {
-      console.error("❌ No email credentials found in DB");
-      return;
-    }
-
-    transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: credentials.user,
-        pass: credentials.pass,
-      },
-    });
-
-    console.log("📧 Mail transporter ready");
-  } catch (err) {
-    console.error("❌ Mail init error:", err);
-  }
-}
-
-mongoose.connection.once("open", initMailer);
+/* -------------------- RESEND -------------------- */
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 /* -------------------- ROUTES -------------------- */
 
-// Health check (VERY IMPORTANT for Render)
+// Health check
 app.get("/", (req, res) => {
   res.send("Bulk Mail Backend is running ✅");
 });
@@ -77,23 +53,17 @@ app.post("/sendemail", async (req, res) => {
       });
     }
 
-    if (!transporter) {
-      return res.status(500).json({
-        success: false,
-        message: "Mail service not ready ❌",
-      });
-    }
-
     // Send emails in parallel
     const results = await Promise.all(
       emailList.map(async (email) => {
         try {
-          await transporter.sendMail({
-            from: transporter.options.auth.user,
+          await resend.emails.send({
+            from: "Bulk Mail <onboarding@resend.dev>",
             to: email,
-            subject,
-            text: msg,
+            subject: subject,
+            html: `<p>${msg}</p>`,
           });
+
           console.log(`✅ Sent to ${email}`);
           return true;
         } catch (err) {
