@@ -2,14 +2,14 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const mongoose = require("mongoose");
-const Resend = require("resend");
+const { Resend } = require("resend"); // Fixed: Destructure to get the Resend class
 
 const app = express();
 
 /* -------------------- MIDDLEWARE -------------------- */
 app.use(
   cors({
-    origin: "https://bulk-mail-roan.vercel.app",
+    origin: ["https://bulk-mail-roan.vercel.app", "http://localhost:3000"], // Allow localhost for dev
     methods: ["GET", "POST"],
   })
 );
@@ -24,31 +24,18 @@ mongoose
   .then(() => console.log("✅ Connected to MongoDB"))
   .catch((err) => console.error("❌ MongoDB connection error:", err));
 
-/* -------------------- MODEL -------------------- */
-const Credential = mongoose.model(
-  "credential",
-  new mongoose.Schema({}, { strict: false }),
-  "bulkmail"
-);
-
 /* -------------------- RESEND INIT -------------------- */
 let resend;
-async function initResend() {
-  try {
-    const credentials = await Credential.findOne();
-    if (!credentials || !credentials.resendApiKey) {
-      console.error("❌ No Resend API key found in DB");
-      return;
-    }
-
-    resend = new Resend(credentials.resendApiKey);
-    console.log("📧 Resend initialized");
-  } catch (err) {
-    console.error("❌ Resend init error:", err);
+function initResend() {
+  if (!process.env.RESEND_API_KEY) {
+    console.error("❌ RESEND_API_KEY not found in .env");
+    return;
   }
+  resend = new Resend(process.env.RESEND_API_KEY);
+  console.log("📧 Resend initialized with API key from .env");
 }
 
-mongoose.connection.once("open", initResend);
+initResend(); // Initialize immediately
 
 /* -------------------- ROUTES -------------------- */
 app.get("/", (req, res) => {
@@ -56,6 +43,7 @@ app.get("/", (req, res) => {
 });
 
 app.post("/sendemail", async (req, res) => {
+  console.log("📨 Received send request:", req.body); // Debug
   try {
     const { msg, subject, emailList } = req.body;
 
@@ -69,20 +57,19 @@ app.post("/sendemail", async (req, res) => {
     if (!resend) {
       return res.status(500).json({
         success: false,
-        message: "Resend service not ready ❌",
+        message: "Resend service not initialized ❌",
       });
     }
 
-    // Send emails sequentially or in parallel
     const results = await Promise.all(
       emailList.map(async (email) => {
         try {
           await resend.emails.send({
-            from: "Vidhya V <vidhyaviswa20@gmail.com>", // Verified in Resend
+            from: "Vidhya V <vidhyaviswa20@gmail.com>", // Ensure this is verified in Resend
             to: email,
             subject,
             text: msg,
-            html: `<p>${msg}</p>`,
+            html: `<p>${msg.replace(/\n/g, '<br>')}</p>`,
           });
           console.log(`✅ Sent to ${email}`);
           return { email, success: true };
