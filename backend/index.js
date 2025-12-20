@@ -25,10 +25,14 @@ mongoose
 let transporter;
 function initNodemailer() {
   console.log("🔧 Initializing Nodemailer...");
+  console.log("GMAIL_USER:", process.env.GMAIL_USER);
+  console.log("GMAIL_PASS:", process.env.GMAIL_PASS ? "Loaded" : "Not loaded");
+
   if (!process.env.GMAIL_USER || !process.env.GMAIL_PASS) {
-    console.error("❌ GMAIL_USER or GMAIL_PASS not found in .env");
+    console.error("❌ Missing GMAIL_USER or GMAIL_PASS in .env");
     return;
   }
+
   transporter = nodemailer.createTransport({
     service: "gmail",
     auth: {
@@ -36,7 +40,15 @@ function initNodemailer() {
       pass: process.env.GMAIL_PASS,
     },
   });
-  console.log("📧 Nodemailer initialized with Gmail");
+
+  // Test the transporter
+  transporter.verify((error, success) => {
+    if (error) {
+      console.error("❌ Nodemailer verification failed:", error);
+    } else {
+      console.log("📧 Nodemailer initialized and verified with Gmail ✅");
+    }
+  });
 }
 
 initNodemailer();
