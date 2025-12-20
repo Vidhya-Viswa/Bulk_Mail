@@ -29,7 +29,7 @@ function initNodemailer() {
   console.log("GMAIL_PASS:", process.env.GMAIL_PASS ? "Loaded" : "Not loaded");
 
   if (!process.env.GMAIL_USER || !process.env.GMAIL_PASS) {
-    console.error("❌ Missing GMAIL_USER or GMAIL_PASS in .env");
+    console.error("❌ Missing GMAIL_USER or GMAIL_PASS - check deployment env vars");
     return;
   }
 
@@ -41,7 +41,6 @@ function initNodemailer() {
     },
   });
 
-  // Test the transporter
   transporter.verify((error, success) => {
     if (error) {
       console.error("❌ Nodemailer verification failed:", error);
@@ -72,7 +71,7 @@ app.post("/sendemail", async (req, res) => {
     if (!transporter) {
       return res.status(500).json({
         success: false,
-        message: "Nodemailer not initialized ❌",
+        message: "Nodemailer not initialized ❌ - check env vars in deployment",
       });
     }
 
